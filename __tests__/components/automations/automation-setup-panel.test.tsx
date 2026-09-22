@@ -575,7 +575,8 @@ describe("AutomationSetupPanel", () => {
         error_detail: null,
         started_at: "2026-01-01T00:00:00.000Z",
         completed_at: null,
-      });
+        automation_id: "auto-draft-1",
+      } as never);
 
       const user = userEvent.setup();
       renderPanel();
@@ -588,6 +589,15 @@ describe("AutomationSetupPanel", () => {
         ),
       );
       expect(AutomationService.validateDraft).not.toHaveBeenCalled();
+      expect(
+        AgentServerConversationService.updateConversationTags,
+      ).toHaveBeenCalledWith(
+        "conv-1",
+        expect.objectContaining({
+          automationdraftid: "draft-1",
+          automationmaterializeddraftid: "auto-draft-1",
+        }),
+      );
       expect(screen.getByTestId("automation-setup-status")).toHaveTextContent(
         "AUTOMATION_SETUP$TEST_DISPATCHED",
       );

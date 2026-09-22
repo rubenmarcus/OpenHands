@@ -7,6 +7,7 @@ import { MemoryRouter } from "react-router";
 import { HttpError } from "@openhands/typescript-client";
 
 import { I18nKey } from "#/i18n/declaration";
+import type { AutomationDraftListResponse } from "#/manifests/types";
 
 import AutomationService from "#/api/automation-service/automation-service.api";
 import ProfilesService from "#/api/profiles-service/profiles-service.api";
@@ -28,6 +29,7 @@ import { AUTOMATION_STACK_SECTION_BOTTOM_CLASS } from "#/utils/automation-stack-
 vi.mock("#/api/automation-service/automation-service.api", () => ({
   default: {
     getAutomations: vi.fn(),
+    listServerDrafts: vi.fn(),
     updateAutomation: vi.fn(),
     toggleAutomation: vi.fn(),
     deleteAutomation: vi.fn(),
@@ -90,11 +92,41 @@ const listResponse: AutomationsResponse = {
   total: 1,
 };
 
+const materializedDraftAutomation: Automation = {
+  ...automation,
+  id: "auto-draft-1",
+  name: "Materialized test draft",
+  enabled: false,
+  state: "DRAFT",
+};
+
+const draftListResponse: AutomationDraftListResponse = {
+  drafts: [
+    {
+      id: "draft-1",
+      endpoint: "/v1/preset/prompt",
+      name: "Saved setup draft",
+      draft: { prompt: "Draft prompt" },
+      validationErrors: null,
+      dispatchable: true,
+      sourceAutomationId: null,
+      materializedAutomationId: "auto-draft-1",
+      lastTestRunId: null,
+      createdAt: "2026-01-02T00:00:00Z",
+      updatedAt: "2026-01-02T00:00:00Z",
+    },
+  ],
+  total: 1,
+};
+
 function renderList(queryClient?: QueryClient) {
   const client =
     queryClient ??
     new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
     });
   return render(
     <QueryClientProvider client={client}>
@@ -114,6 +146,11 @@ beforeEach(() => {
   vi.mocked(AutomationService.checkHealth).mockResolvedValue({ status: "ok" });
   vi.mocked(AutomationService.getAutomations).mockReset();
   vi.mocked(AutomationService.getAutomations).mockResolvedValue(listResponse);
+  vi.mocked(AutomationService.listServerDrafts).mockReset();
+  vi.mocked(AutomationService.listServerDrafts).mockResolvedValue({
+    drafts: [],
+    total: 0,
+  });
   vi.mocked(AutomationService.updateAutomation).mockReset();
   vi.mocked(AutomationService.dispatchAutomation).mockReset();
   vi.mocked(ProfilesService.listProfiles).mockReset();
@@ -128,6 +165,37 @@ beforeEach(() => {
 afterEach(() => {
   window.localStorage.clear();
   __resetActiveStoreForTests();
+});
+
+describe("AutomationsList — draft sections", () => {
+  it("renders saved setup drafts separately from materialized draft automations", async () => {
+    vi.mocked(AutomationService.getAutomations).mockResolvedValue({
+      automations: [automation, materializedDraftAutomation],
+      total: 2,
+    });
+    vi.mocked(AutomationService.listServerDrafts).mockResolvedValue(
+      draftListResponse,
+    );
+
+    renderList();
+
+    expect(
+      await screen.findByText(I18nKey.AUTOMATIONS$SAVED_DRAFTS),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Saved setup draft")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("automation-setup-draft-draft-1"),
+    ).toBeInTheDocument();
+
+    expect(
+      screen.getByText(I18nKey.AUTOMATIONS$MATERIALIZED_DRAFTS),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Materialized test draft")).toBeInTheDocument();
+
+    expect(
+      screen.getByTestId("automation-card-auto-draft-1"),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("AutomationsList — Edit from the row kebab", () => {
@@ -338,9 +406,7 @@ describe("AutomationsList — Run now toasts", () => {
     });
     const user = userEvent.setup();
     renderList();
-    await screen.findByTestId(
-      `automation-list-row-${disabledAutomation.id}`,
-    );
+    await screen.findByTestId(`automation-list-row-${disabledAutomation.id}`);
     const button = screen.getByTestId(
       `automation-run-now-${disabledAutomation.id}`,
     );
@@ -410,9 +476,9 @@ describe("AutomationsList — add automation menu", () => {
     ).not.toBeInTheDocument();
 
     await user.click(addTrigger);
-    expect(screen.getByTestId("automations-add-automation-menu")).not.toHaveClass(
-      "mt-2",
-    );
+    expect(
+      screen.getByTestId("automations-add-automation-menu"),
+    ).not.toHaveClass("mt-2");
     expect(
       screen.getByTestId("automations-import-automation"),
     ).toBeInTheDocument();
@@ -461,7 +527,10 @@ describe("AutomationsList — list freshness on remount", () => {
         total: 2,
       });
     const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
     });
 
     // Act — first mount lands on the original list, then unmount and remount

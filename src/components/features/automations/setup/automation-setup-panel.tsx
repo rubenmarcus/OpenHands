@@ -542,10 +542,14 @@ export function AutomationSetupPanel({
   }, [conversationId, conversationTags]);
 
   const updateConversationDraftTags = useCallback(
-    async (draftId: string | null) => {
+    async (draftId: string | null, materializedDraftId?: string | null) => {
       if (!conversationId) return;
       const nextTags = draftId
-        ? buildAutomationDraftTags(conversationTags, draftId)
+        ? buildAutomationDraftTags(
+            conversationTags,
+            draftId,
+            materializedDraftId,
+          )
         : removeAutomationDraftTags(conversationTags);
       await AgentServerConversationService.updateConversationTags(
         conversationId,
@@ -571,6 +575,10 @@ export function AutomationSetupPanel({
         setServerDraft(saved);
         setDraftRuns([]);
         setForm(formFromServerDraft(saved, draft));
+        void updateConversationDraftTags(
+          saved.id,
+          saved.materializedAutomationId,
+        );
       })
       .catch((error: unknown) => {
         if (cancelled) return;
@@ -588,7 +596,12 @@ export function AutomationSetupPanel({
     return () => {
       cancelled = true;
     };
-  }, [draft, serverDraft?.id, taggedServerDraftId]);
+  }, [
+    draft,
+    serverDraft?.id,
+    taggedServerDraftId,
+    updateConversationDraftTags,
+  ]);
 
   const {
     kind,
@@ -876,7 +889,7 @@ export function AutomationSetupPanel({
       : await AutomationService.createServerDraft(request);
     setServerDraft(saved);
     setIsTaggedDraftMissing(false);
-    await updateConversationDraftTags(saved.id);
+    await updateConversationDraftTags(saved.id, saved.materializedAutomationId);
     return saved;
   };
   const runPreflightValidation = async () => {
@@ -995,6 +1008,7 @@ export function AutomationSetupPanel({
         materializedAutomationId,
         lastTestRunId: run.id,
       });
+      await updateConversationDraftTags(saved.id, materializedAutomationId);
       setDraftRuns((previous) => [
         run,
         ...previous.filter((existing) => existing.id !== run.id),

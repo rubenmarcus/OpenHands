@@ -9,6 +9,7 @@ import {
 } from "#/utils/custom-toast-handlers";
 import { getApiErrorMessage } from "#/utils/api-error-message";
 import {
+  useAutomationDrafts,
   useAutomations,
   useToggleAutomation,
   useDeleteAutomation,
@@ -58,6 +59,7 @@ import {
 } from "#/manifests/automation-insights";
 import { interpolateValues } from "#/manifests/manifest-template";
 import type {
+  AutomationDraftApiResponse,
   DashboardSortValue,
   DashboardStatusValue,
   DashboardTriggerValue,
@@ -70,6 +72,8 @@ import { MANIFEST_ICON_BY_SLUG } from "#/components/features/manifest/manifest-i
 import { ManifestOverviewTiles } from "#/components/features/manifest/manifest-overview-tiles";
 import { ManifestSubpageLayout } from "#/components/features/manifest/manifest-subpage-layout";
 import { cn, downloadBlob } from "#/utils/utils";
+import { isDraftAutomation } from "#/utils/automation-state";
+import { StatusBadge } from "#/components/features/automations/status-badge";
 
 const PAGE_SIZE = 50;
 
@@ -84,6 +88,58 @@ export const clientLoader = () => {
   }
   return null;
 };
+
+function matchesSavedDraftSearch(
+  draft: AutomationDraftApiResponse,
+  searchQuery: string,
+): boolean {
+  const normalized = searchQuery.trim().toLowerCase();
+  if (!normalized) return true;
+  return (draft.name ?? draft.id).toLowerCase().includes(normalized);
+}
+
+function SavedDraftsGroup({
+  drafts,
+}: {
+  drafts: AutomationDraftApiResponse[];
+}) {
+  const { t } = useTranslation("openhands");
+  if (drafts.length === 0) return null;
+
+  return (
+    <section>
+      <div className="flex items-center">
+        <h2 className="text-base font-semibold text-foreground">
+          {t(I18nKey.AUTOMATIONS$SAVED_DRAFTS)}
+        </h2>
+        <StatusBadge count={drafts.length} />
+      </div>
+      <ul className="mt-3 flex flex-col gap-3">
+        {drafts.map((draft) => (
+          <li
+            key={draft.id}
+            data-testid={`automation-setup-draft-${draft.id}`}
+            className="rounded-2xl border border-[var(--oh-border)] bg-[var(--oh-surface)] p-4"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-semibold text-content">
+                  {draft.name ?? t(I18nKey.AUTOMATIONS$UNTITLED_DRAFT)}
+                </h3>
+                <p className="mt-1 text-xs text-muted">
+                  {t(I18nKey.AUTOMATIONS$SAVED_DRAFTS_DESCRIPTION)}
+                </p>
+              </div>
+              <span className="rounded-full bg-[var(--oh-warning)]/10 px-3 py-1 text-xs text-[var(--oh-warning)]">
+                {t(I18nKey.AUTOMATIONS$DETAIL$DRAFT)}
+              </span>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 export default function AutomationsList() {
   const { t } = useTranslation("openhands");
@@ -139,6 +195,16 @@ export default function AutomationsList() {
     offset: 0,
     enabled: isBackendHealthy,
   });
+  const {
+    data: draftsData,
+    isLoading: isDraftsLoading,
+    isError: isDraftsError,
+    refetch: refetchDrafts,
+  } = useAutomationDrafts({
+    limit,
+    offset: 0,
+    enabled: isBackendHealthy,
+  });
   // One runs query per listed automation — dashboard mode only.
   const runSummaries = useAutomationRunSummaries(data?.automations ?? [], {
     enabled: isBackendHealthy && dashboard !== null,
@@ -177,11 +243,25 @@ export default function AutomationsList() {
     runSummaries,
   ]);
 
+  const visibleSavedDrafts = useMemo(
+    () =>
+      (draftsData?.drafts ?? []).filter((draft) =>
+        matchesSavedDraftSearch(draft, searchQuery),
+      ),
+    [draftsData?.drafts, searchQuery],
+  );
   const activeAutomations = useMemo(
-    () => visible.filter((a) => a.enabled),
+    () => visible.filter((a) => a.enabled && !isDraftAutomation(a)),
     [visible],
   );
-  const inactive = useMemo(() => visible.filter((a) => !a.enabled), [visible]);
+  const materializedDrafts = useMemo(
+    () => visible.filter((a) => isDraftAutomation(a)),
+    [visible],
+  );
+  const inactive = useMemo(
+    () => visible.filter((a) => !a.enabled && !isDraftAutomation(a)),
+    [visible],
+  );
 
   const handleToggle = (id: string, currentEnabled: boolean) => {
     const willEnable = !currentEnabled;
@@ -331,7 +411,12 @@ export default function AutomationsList() {
 
   const hasMore = data ? data.total > data.automations.length : false;
   const hasNoAutomations =
-    !isLoading && !isError && data?.automations.length === 0;
+    !isLoading &&
+    !isDraftsLoading &&
+    !isError &&
+    !isDraftsError &&
+    data?.automations.length === 0 &&
+    draftsData?.drafts.length === 0;
 
   // Show loading state while checking health
   if (isHealthLoading) {
@@ -433,7 +518,7 @@ export default function AutomationsList() {
 
       {/* Content */}
       <div className={cn("flex flex-col gap-6", !dashboard && "mt-6")}>
-        {isLoading && (
+        {(isLoading || isDraftsLoading) && (
           <div className="flex flex-col gap-3">
             {Array.from({ length: 3 }).map((_, i) => (
               <AutomationCardSkeleton key={`skeleton-${String(i)}`} />
@@ -441,22 +526,51 @@ export default function AutomationsList() {
           </div>
         )}
 
-        {isError && !isLoading && <ErrorState onRetry={refetch} />}
+        {(isError || isDraftsError) && !(isLoading || isDraftsLoading) && (
+          <ErrorState
+            onRetry={() => {
+              void refetch();
+              void refetchDrafts();
+            }}
+          />
+        )}
 
         {hasNoAutomations && <EmptyState />}
 
         {!isLoading &&
           !isError &&
+          !isDraftsError &&
           data &&
-          data.automations.length > 0 &&
-          (dashboard && visible.length === 0 ? (
+          draftsData &&
+          (data.automations.length > 0 || draftsData.drafts.length > 0) &&
+          (dashboard &&
+          visible.length === 0 &&
+          visibleSavedDrafts.length === 0 ? (
             <AutomationsFilteredEmptyState onClear={handleClearFilters} />
           ) : (
             <>
+              <SavedDraftsGroup drafts={visibleSavedDrafts} />
               <AutomationGroup
                 title={t(I18nKey.AUTOMATIONS$ACTIVE)}
                 count={activeAutomations.length}
                 automations={activeAutomations}
+                view={viewMode}
+                onToggle={handleToggle}
+                onRunNow={handleRunNow}
+                runPendingId={
+                  dispatchMutation.isPending
+                    ? (dispatchMutation.variables ?? null)
+                    : null
+                }
+                onDelete={handleDeleteRequest}
+                onExport={handleExport}
+                onEdit={handleEditRequest}
+                insights={groupInsights}
+              />
+              <AutomationGroup
+                title={t(I18nKey.AUTOMATIONS$MATERIALIZED_DRAFTS)}
+                count={materializedDrafts.length}
+                automations={materializedDrafts}
                 view={viewMode}
                 onToggle={handleToggle}
                 onRunNow={handleRunNow}

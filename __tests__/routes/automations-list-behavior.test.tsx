@@ -20,6 +20,12 @@ const mocks = vi.hoisted(() => ({
     isError: false,
     refetch: vi.fn(),
   },
+  draftsState: {
+    data: { drafts: [], total: 0 },
+    isLoading: false,
+    isError: false,
+    refetch: vi.fn(),
+  },
   dispatchState: {
     isPending: false,
     variables: undefined as string | undefined,
@@ -28,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   backendKind: "local" as "local" | "cloud",
   canManage: true,
   navigate: vi.fn(),
+  useAutomationDrafts: vi.fn(),
   useAutomations: vi.fn(),
   useAutomationRunSummaries: vi.fn(),
   toggle: vi.fn(),
@@ -88,6 +95,10 @@ vi.mock("#/hooks/query/use-automation-health", () => ({
 }));
 
 vi.mock("#/hooks/query/use-automations", () => ({
+  useAutomationDrafts: (options: unknown) => {
+    mocks.useAutomationDrafts(options);
+    return mocks.draftsState;
+  },
   useAutomations: (options: unknown) => {
     mocks.useAutomations(options);
     return mocks.automationsState;
@@ -494,6 +505,9 @@ beforeEach(() => {
   mocks.automationsState.data = { automations: [], total: 0 };
   mocks.automationsState.isLoading = false;
   mocks.automationsState.isError = false;
+  mocks.draftsState.data = { drafts: [], total: 0 };
+  mocks.draftsState.isLoading = false;
+  mocks.draftsState.isError = false;
   mocks.dispatchState.isPending = false;
   mocks.dispatchState.variables = undefined;
   mocks.importState.isPending = false;
@@ -779,7 +793,7 @@ describe("automations list interactions", () => {
 
     renderList();
 
-    expect(screen.getAllByText("none", { selector: "output" })).toHaveLength(2);
+    expect(screen.getAllByText("none", { selector: "output" })).toHaveLength(3);
   });
 
   it.each([
