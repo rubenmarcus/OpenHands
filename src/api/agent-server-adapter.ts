@@ -17,6 +17,7 @@ import { getAgentServerClientOptions } from "./agent-server-client-options";
 import {
   getCachedAgentServerInfo,
   isAgentServerToolAvailable,
+  type AgentServerInfo,
 } from "./agent-server-compatibility";
 import { getAgentServerWorkingDir } from "./agent-server-config";
 import { getEffectiveLocalBackend } from "./backend-registry/active-store";
@@ -211,7 +212,7 @@ export function parseRuntimeServicesInfo(
   return parsed;
 }
 
-export async function fetchBackendRuntimeServicesInfo(): Promise<RuntimeServicesInfo | null> {
+async function fetchBackendServerInfo(): Promise<AgentServerInfo | null> {
   let clientOptions: ReturnType<typeof getAgentServerClientOptions>;
   try {
     clientOptions = getAgentServerClientOptions({ timeout: 3000 });
@@ -219,19 +220,30 @@ export async function fetchBackendRuntimeServicesInfo(): Promise<RuntimeServices
     return null;
   }
 
-  const cached = parseRuntimeServicesInfo(
-    getCachedAgentServerInfo({ host: clientOptions.host })?.runtime_services,
-  );
+  const cached = getCachedAgentServerInfo({ host: clientOptions.host });
   if (cached) return cached;
 
   try {
-    const serverInfo = await new ServerClient(clientOptions).getServerInfo();
-    return parseRuntimeServicesInfo(
-      (serverInfo as { runtime_services?: unknown }).runtime_services,
-    );
+    return (await new ServerClient(
+      clientOptions,
+    ).getServerInfo()) as AgentServerInfo;
   } catch {
     return null;
   }
+}
+
+export async function fetchBackendRuntimeServicesInfo(): Promise<RuntimeServicesInfo | null> {
+  const serverInfo = await fetchBackendServerInfo();
+  return parseRuntimeServicesInfo(
+    (serverInfo as { runtime_services?: unknown } | null)?.runtime_services,
+  );
+}
+
+export async function fetchBackendExecutionRuntime(): Promise<
+  AgentServerInfo["execution_runtime"]
+> {
+  const serverInfo = await fetchBackendServerInfo();
+  return serverInfo?.execution_runtime;
 }
 
 /**
@@ -474,6 +486,15 @@ interface LocalWorkspacePayload {
   working_dir: string;
 }
 
+const DOCKER_EXECUTION_WORKING_DIR = "/workspace" as const;
+
+interface DockerExecutionWorkspacePayload {
+  kind: "DockerExecutionWorkspace";
+  working_dir: typeof DOCKER_EXECUTION_WORKING_DIR;
+}
+
+type WorkspacePayload = LocalWorkspacePayload | DockerExecutionWorkspacePayload;
+
 interface InitialMessagePayload {
   role: "user";
   content: Array<{ type: "text"; text: string }>;
@@ -481,7 +502,7 @@ interface InitialMessagePayload {
 }
 
 type ConversationSettingsPayload = SettingsRecord & {
-  workspace: LocalWorkspacePayload;
+  workspace: WorkspacePayload;
   initial_message?: InitialMessagePayload;
 };
 
@@ -1049,9 +1070,16 @@ function buildConfiguredConversationSettings(options: {
   conversationInstructions?: string;
   plugins?: PluginSpec[];
   workingDir?: string;
+  executionRuntime?: AgentServerInfo["execution_runtime"];
 }): ConversationSettingsPayload {
-  const { settings, query, conversationInstructions, plugins, workingDir } =
-    options;
+  const {
+    settings,
+    query,
+    conversationInstructions,
+    plugins,
+    workingDir,
+    executionRuntime,
+  } = options;
   const conversationSettings = toRecord(settings.conversation_settings);
   const initialMessage = buildInitialMessage(query, conversationInstructions);
 
@@ -1059,12 +1087,19 @@ function buildConfiguredConversationSettings(options: {
     (key) => delete conversationSettings[key],
   );
 
+  const workspace: WorkspacePayload =
+    executionRuntime === "docker"
+      ? {
+          kind: "DockerExecutionWorkspace",
+          working_dir: DOCKER_EXECUTION_WORKING_DIR,
+        }
+      : {
+          kind: "LocalWorkspace",
+          working_dir: workingDir ?? getAgentServerWorkingDir(),
+        };
   const payload: ConversationSettingsPayload = {
     ...conversationSettings,
-    workspace: {
-      kind: "LocalWorkspace",
-      working_dir: workingDir ?? getAgentServerWorkingDir(),
-    },
+    workspace,
     ...(initialMessage ? { initial_message: initialMessage } : {}),
     ...(plugins?.length
       ? {
@@ -1091,7 +1126,7 @@ interface LookupSecret {
 type CustomSecretInput = { name: string; description?: string };
 
 type StartConversationPayloadBase = Record<string, unknown> & {
-  workspace: LocalWorkspacePayload;
+  workspace: WorkspacePayload;
   confirmation_policy: SettingsRecord;
   security_analyzer?: SettingsRecord;
   initial_message?: InitialMessagePayload;
@@ -1150,6 +1185,7 @@ export interface StartConversationOptions {
   agentProfileKind?: AgentKind;
   titleLlmProfile?: string;
   runtimeServicesInfo?: RuntimeServicesInfo | null;
+  executionRuntime?: AgentServerInfo["execution_runtime"];
   workspaceHookConfig?: HookConfig | null;
 }
 
@@ -1217,9 +1253,10 @@ export function buildStartConversationRequest(
       }
     : options;
 
-  const conversationSettings = buildConfiguredConversationSettings(
-    sourceConversationOptions,
-  );
+  const conversationSettings = buildConfiguredConversationSettings({
+    ...sourceConversationOptions,
+    executionRuntime: options.executionRuntime,
+  });
 
   const payload: AgentSettingsStartConversationPayload = {
     // ``agent_profile_id`` and ``agent_settings`` are mutually exclusive agent
@@ -1270,7 +1307,10 @@ export function buildStartConversationRequest(
     ...(options.titleLlmProfile
       ? { title_llm_profile: options.titleLlmProfile }
       : {}),
-    worktree: options.worktree ?? true,
+    worktree:
+      options.executionRuntime === "docker"
+        ? false
+        : (options.worktree ?? true),
   };
 
   // Stamp the client source tag so the agent-server can attribute the
@@ -1363,6 +1403,8 @@ export function buildStartPlanningConversationRequest(options: {
   maxIterations?: number;
   /** Mirrors the code agent's skill filtering — see buildConfiguredOpenHandsAgentSettings. */
   skillEnablement?: SkillEnablement;
+  /** Mirrors the main conversation's workspace selection — see buildConfiguredConversationSettings. */
+  executionRuntime?: AgentServerInfo["execution_runtime"];
 }): RawAgentStartConversationPayload {
   const agentSettings = toRecord(options.encryptedAgentSettings);
   const llm = buildNormalizedLlmSettings(agentSettings.llm);
@@ -1427,10 +1469,16 @@ export function buildStartPlanningConversationRequest(options: {
         keep_first: 6,
       },
     },
-    workspace: {
-      kind: "LocalWorkspace",
-      working_dir: options.workingDir,
-    },
+    workspace:
+      options.executionRuntime === "docker"
+        ? {
+            kind: "DockerExecutionWorkspace",
+            working_dir: DOCKER_EXECUTION_WORKING_DIR,
+          }
+        : {
+            kind: "LocalWorkspace",
+            working_dir: options.workingDir,
+          },
     // No Canvas UI client tool: the planner's only output is PLAN.md, which the
     // Planner tab surfaces on its own via PlanningFileEditorObservation. Handing
     // it the panel-control tool would only let it navigate the right-side panel
@@ -1543,6 +1591,8 @@ export async function buildStartPlanningConversationRequestWithEncryptedSettings
    */
   parentAgentProfileId?: string | null;
   initialMessage?: string;
+  /** The server's `execution_runtime` — threads through to workspace selection. */
+  executionRuntime?: AgentServerInfo["execution_runtime"];
 }): Promise<RawAgentStartConversationPayload> {
   const { SecretsService } = await import("./secrets-service");
 
@@ -1622,20 +1672,20 @@ export async function buildStartConversationRequestWithEncryptedSettings(options
     import("./hooks-service"),
   ]);
 
-  const [
-    settingsResult,
-    customSecrets,
-    runtimeServicesInfo,
-    workspaceHookConfig,
-  ] = await Promise.all([
-    SettingsService.getSettingsForConversation(),
-    SecretsService.getSecrets(),
-    fetchBackendRuntimeServicesInfo(),
-    HooksService.loadWorkspaceHooks(options.hooksProjectDir),
-  ]);
+  const [settingsResult, customSecrets, serverInfo, workspaceHookConfig] =
+    await Promise.all([
+      SettingsService.getSettingsForConversation(),
+      SecretsService.getSecrets(),
+      fetchBackendServerInfo(),
+      HooksService.loadWorkspaceHooks(options.hooksProjectDir),
+    ]);
 
   const { agentSettings, conversationSettings, secretsEncrypted } =
     settingsResult;
+  const runtimeServicesInfo = parseRuntimeServicesInfo(
+    (serverInfo as { runtime_services?: unknown } | null)?.runtime_services,
+  );
+  const executionRuntime = serverInfo?.execution_runtime;
 
   // A profile launch resolves the LLM server-side, so the current-settings
   // subscription check doesn't apply (and can't see the profile's LLM).
@@ -1650,6 +1700,7 @@ export async function buildStartConversationRequestWithEncryptedSettings(options
     secretsEncrypted,
     customSecrets,
     runtimeServicesInfo,
+    executionRuntime,
     workspaceHookConfig,
   });
 }
