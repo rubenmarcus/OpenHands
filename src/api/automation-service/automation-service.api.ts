@@ -722,7 +722,7 @@ class AutomationService {
    */
   static async createAutomationDraft(
     body: SetupRequestBody,
-    /** The entry or generic draft kind decides the create endpoint. */
+    /** The entry/action or generic draft kind decides the create endpoint. */
     target?: AutomationDraftCreateTarget,
     selectedAction?: string | null,
   ): Promise<Record<string, unknown>> {
