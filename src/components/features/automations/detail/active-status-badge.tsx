@@ -19,7 +19,7 @@ const STATUS_DISPLAY: Record<
   active: {
     testId: "active-status-badge-active",
     label: I18nKey.AUTOMATIONS$DETAIL$ACTIVE,
-    className: "bg-[var(--oh-success)]/15 text-[var(--oh-success)]",
+    className: "bg-semantic-success/15 text-semantic-success",
   },
   inactive: {
     testId: "active-status-badge-inactive",
@@ -29,7 +29,7 @@ const STATUS_DISPLAY: Record<
   draft: {
     testId: "active-status-badge-draft",
     label: I18nKey.AUTOMATIONS$DETAIL$DRAFT,
-    className: "bg-[var(--oh-warning)]/15 text-[var(--oh-warning)]",
+    className: "bg-warning/15 text-warning",
   },
 };
 

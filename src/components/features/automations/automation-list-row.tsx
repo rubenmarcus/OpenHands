@@ -136,12 +136,12 @@ export function AutomationListRow({
         placement="top-start"
         closeDelay={100}
         disableAnimation={disableAnimation}
-        className="rounded-xl border border-[var(--oh-border)] bg-base-secondary p-0 text-white shadow-xl"
+        className="rounded-xl border border-border bg-base-secondary p-0 text-contrast shadow-xl"
       >
         <NavigationLink
           to={detailHref}
           aria-label={`${automation.name} ${t(statusLabelKey)}`}
-          className="flex min-w-0 flex-1 items-center justify-between gap-3 px-3 py-2.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--oh-focus)]"
+          className="flex min-w-0 flex-1 items-center justify-between gap-3 px-3 py-2.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus"
         >
           <div className="grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)] gap-x-2">
             <span
@@ -151,7 +151,7 @@ export function AutomationListRow({
               <AutomationHealthIndicator health={health} />
             </span>
             <span className="flex min-w-0 items-center gap-2">
-              <span className="truncate text-sm font-medium leading-5 text-[var(--oh-foreground)]">
+              <span className="truncate text-sm font-medium leading-5 text-foreground">
                 {automation.name}
               </span>
               {showDraftBadge ? (
@@ -159,7 +159,7 @@ export function AutomationListRow({
               ) : null}
             </span>
             {hasMeta ? (
-              <span className="col-start-2 mt-0.5 flex min-w-0 items-center gap-1.5 text-xs leading-4 text-[var(--oh-text-secondary)]">
+              <span className="col-start-2 mt-0.5 flex min-w-0 items-center gap-1.5 text-xs leading-4 text-text-secondary">
                 <TriggerIcon className="size-3 shrink-0" aria-hidden="true" />
                 {triggerEventLabel ? (
                   <span className="truncate">{triggerEventLabel}</span>
@@ -171,7 +171,7 @@ export function AutomationListRow({
                   <span
                     className={cn(
                       extensionModuleCardPillClassName,
-                      "shrink-0 px-1.5 py-0 text-[var(--oh-text-secondary)]",
+                      "shrink-0 px-1.5 py-0 text-text-secondary",
                     )}
                   >
                     {formatTriggerSourceLabel(triggerSource)}
